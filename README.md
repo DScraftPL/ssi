@@ -81,6 +81,14 @@ Dane treningowe: (344, 14)
  [2.62206148 2.60759494 2.60262206 ... 2.53164557 2.48101266 2.44122966]]
 ```
 
+Nie zastosowano standardowego podziału na zbiór testowy i zbiór treningowy. Dane mają charakter sygnałowy i szeregów czasowych, dlatego jeden ze zbiorów danych zostanie zbiorem treningowym. Tutaj, wybrano najnowszy zbiór `Keepers`. 
+
+```python
+TEST_LIGA = -1
+leagues = [necropolis_df, affiliction_df, settlers_df, mercenaries_df, keepers_df]
+test_idx = TEST_LIGA % len(leagues)
+```
+
 ## Wykrywanie anomalii
 
 Wykorzystano 4 modele do detekcji anomalii: IsolationForest, OneClassSVM, LocalOutlierFactor oraz EllipticEnvelope. 
@@ -88,43 +96,85 @@ Założono 0.1 zanieszczenia danych.
 
 ![Wykres ilości anomalii w danych](images/anomaly_detection.png)
 
-Najbardziej czułym modelem na usunięcie anomalii była sieć neuronowa. Reszta modeli nie zmieniała wyników, przy wyczyszczeniu danych. 
+Najbardziej czułym modelem na usunięcie anomalii była sieć neuronowa. Reszta modeli nie zmieniała znacząco wyników, przy wyczyszczeniu danych. 
+
+
+Parametry modeli wykrywania anomalii:
+```python
+detectors = {
+    'IsolationForest': IsolationForest(contamination=contamination, random_state=42),
+    'OneClassSVM': OneClassSVM(nu=contamination, kernel='rbf', gamma='scale'),
+    'LOF': LocalOutlierFactor(n_neighbors=20, contamination=contamination, novelty=False),
+    'EllipticEnvelope': EllipticEnvelope(contamination=contamination, random_state=42)
+}
+```
 
 ### Isolation Forest
 
 ![Isolation Forest](images/isolation_forest.png)
 
+Model KNN osiągnał najlepszy R2, po zastosowaniu detekcji anomalii za pomocą Isolation Forest. Natomiast, IF najbardziej zaszkodził sieci neuronowej, powodując najgorszy wynik. 
+
 ### One Class SVM
 
 ![OneClassSVM](images/oneclasssvm.png)
 
-### 
+One Class SVM nie wpłynął znacząco na poprawę jakości modeli, osiągnał nieznacznie lepsze lub nieznacznie gorsze wyniki w porównaniu z oryginalnymi danymi dla klasycznych modeli, natomiast, dla sieci neuronowej osiągnął wynik podobny do LOF i EllipticEnvelope. 
+ 
+### LocalOutlierFactor
 
 ![lof](images/lof.png)
+
+Model LOF okazał się najlepszy dla Support Vector Regressor. Dzięki temu model osiągnał najlepsze metryki ze wszystkich. Reszta wyników dla LOF nie odbiegała znacząco od reszty modeli. 
 
 ### Elliptic Envelope
 
 ![elliptic envelope](images/elliptic_envelope.png)
 
+EllipticEnvelope nie pomógł, ale też nie zaszkodził. Wykorzystanie tego modelu nie wskazuje na znaczącą poprawę danych. 
+
 ### Oryginalne dane
 
 ![original data](images/original.png)
 
+Sieć neuronowa osiągneła najlepsze wyniki, kiedy wykorzystano dane "bez czyszczenia". Reszta modeli osiągneła podobne metryki, niezależnie od detekcji anomalii. 
+
 ## Uczenie modeli 
 
-Do znalezienia najlepszych parametrów, wykorzystano `GridSearchCV`, ze strategią `TimeSeriesCrossValidation`. Kryterium wyboru jest średni błąd `neg_mean_absolute_error`. 
+Do znalezienia najlepszych parametrów, wykorzystano `GridSearchCV`, ze strategią `TimeSeriesCrossValidation`, ponieważ dane mają charakter szeregów czasowych. Zachowuje to chronologię obserwacji i pozwala uniknąć przeciekowi informacji. Kryterium wyboru jest średni błąd `neg_mean_absolute_error`. 
 Wyszukiwanie parametrów zostało przeprowadzone dla danych orignalnych oraz danych po anomalii. 
+
+Każdy model został oceniony poniższymi metrykami:
+- MEA: Mean Absolute Error - Średni błąd bezwzględny 
+  - im niższa wartość tym model jest bardziej dokładny
+- MAPE: Mean Absolute Percentage Error - Średni bewzględny błąd procentowy
+  - o jaki %, model przeciętnie się myli
+- MSE: Mean Squared Error - Średni błąd kwadratowy
+  - większe błędy są karane bardziej niż małe błędy
+- R2: Coefficient of Determination - Współczynnik determinacji
+  - miara dopasowania modelu do danych
+  - 1 to idealne dopasowanie
+  - 0 oznacza brak poprawy względem dopasowania średnią
 
 ## RandomForest
 
+Wykorzystano `RandomForestRegressor` do stworzenia modelu regresji, na podstawie drzew decyzyjnych.
+
 ### Parametry kalibracji 
+
+Model trenowano na wszystkich rdzeniach procesora (`n_jobs = -1`). 
+Wykorzystane parametry:
+- `n_estimators`: liczba drzew, wchodząca w skład lasu losowego
+- `max_depth`: maksymalna głębokość pojedynczego drzewa
+- `min_samples_split`: minimalna liczba próbek do podziału węzła
+- `min_samples_leaf`: minimalna liczba próbek w liściu drzewa
 
 ```python
 rf_param_grid = {
-    'n_estimators': [100, 200, 300],
-    'max_depth': [5, 10, 15, None],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4]
+    'n_estimators': [100, 200],
+    'max_depth': [10, 20, None],
+    'min_samples_split': [5, 10],
+    'min_samples_leaf': [2, 4]
 }
 
 rf_base = RandomForestRegressor(random_state=42, n_jobs=-1)
@@ -151,16 +201,30 @@ Fitting 5 folds for each of 24 candidates, totalling 120 fits
   MAPE: 2.52%
   MSE:  31.31
   R²:   0.9131
-  best_params: {'max_depth': 20, 'min_samples_leaf': 2, 'min_samples_split': 5, 'n_estimators': 100}
+  best_params: {
+    'max_depth': 20, 
+    'min_samples_leaf': 2, 
+    'min_samples_split': 5, 
+    'n_estimators': 100
+  }
 ```
 
-Uzyskany model osiągnął dobre wyniki predykcyjne. Współczynnik R2 na poziomie 0.9131 wskazuje na to, że model wyjaśnia 91% zmienności danych. 
+Uzyskany model osiągnął dobre wyniki predykcyjne. Współczynnik R2 na poziomie 0.9131 wskazuje na to, że model wyjaśnia 91% zmienności danych. Niska wartość błędu Mean Absolute Pecentage Error świadczy o dobrej jakości prognozy. 
 
 ![Random Forest](images/random_forest.png)
 
 ## Support Vector Regressor
 
 ### Parametry kalibracji 
+
+W celu optymalizacji modelu zastosowano metodę przeszukiwania siatki parametrów `GridSearchCV`. Przetestowano następujące hiperparametry:
+- `kernel`: typ funkcji wykorzystywanej przez jądro
+  - `rbf` - radial basis function, nie liniowy
+  - `linear` - liniowa 
+- `C`: parametr kontrolujący kompromis pomiędzy dokładnością, a generalizacją modelu 
+- `epsilon`: szerokość marginesu błędu, w którym oddalenia nie są karane
+- `gamma`: parametr wpływający na zasięg oddziaływania pojedynczych punktów. 
+  - Dla `linear` gamma jest ignorowany.
 
 ```python
 svr_param_grid = {
@@ -183,6 +247,8 @@ svr_grid = GridSearchCV(
 
 ### Ocena
 
+Dla oryginalnych danych, model SVR osiągnał takie wyniki:
+
 ```
 ============================================================
 Przetwarzanie danych: original_data
@@ -192,16 +258,36 @@ Fitting 5 folds for each of 36 candidates, totalling 180 fits
   MAPE: 1.79%
   MSE:  16.60
   R²:   0.9540
-  best params: {'C': 10, 'epsilon': 0.05, 'gamma': 'scale', 'kernel': 'linear'}
+  best params: {
+    'C': 10, 
+    'epsilon': 0.05, 
+    'gamma': 'scale', 
+    'kernel': 'linear'
+  }
 ```
 
-Model SVR jest najlepszym zastosowanym modelem w tym eksperymencie. Współczynnik R2 wyjaśnia 95% zmienności danych. Mean Square Error (MSE) jest prawie dwukrotnie mniejszy niż w przypadku Random Forest.  
+Model SVR osiągnął najlepsze wyniki spośród wszystkich analizowanych modeli. Współczynnik R2 wyjaśnia 95% zmienności danych. Mean Square Error (MSE) jest prawie dwukrotnie mniejszy niż w przypadku Random Forest.  
 
 ![svr](images/svr.png)
 
 ## K Nearest Regressor
 
 ### Parametry kalibracji 
+
+Do strojenia modelu `KNeighborsRegressor` wykorzystano metodę `GridSearchCV` z walidacją krzyżową dla szeregów czasowych (`TimeSeriesSplit`).
+
+Przeanalizowany następujące parametry:
+- `n_neighbors`: liczba najbliższych sąsiadów, wykorzystywanych podczas predykcji
+- `weights`: sposób wyboru wagi dla sąsiadów:
+  - `uniform`: wszyscy sąsiedzi mają taki sam wpływ
+  - `distance`: im bliżej, tym większy wpływ na wynik
+- `p`:" metryka Minkowskiego:
+  - `p=1`: oznacza odległość Manhattan
+  - `p=2`: oznacza odległość euklidesową
+- `algorithm`: algorytm wyszukiwania najbliższych sąsiadów
+  - `auto`: algorytm sam decyduje o najlepszym algorytmie dla danych
+  - `ball_tree`: tworzy hypersferę
+  - `kd_tree`: tworzy drzewo binarne
 
 ```python
 knn_param_grid = {
@@ -224,6 +310,8 @@ knn_grid = GridSearchCV(
 
 ### Ocena
 
+Dla pełnego zbioru danych, algorytm KNR osiągnał następujące wyniki:
+
 ```
 ============================================================
 Przetwarzanie danych: original_data
@@ -233,14 +321,35 @@ Fitting 5 folds for each of 72 candidates, totalling 360 fits
   MAPE: 4.85%
   MSE:  89.41
   R²:   0.7519
-  best params: {'algorithm': 'auto', 'n_neighbors': 7, 'p': 2, 'weights': 'uniform'}
+  best params: {
+    'algorithm': 'auto', 
+    'n_neighbors': 7, 
+    'p': 2, 
+    'weights': 'uniform'
+  }
 ```
+
+Model kNN osiągnął wyraźnie słabsze wyniki niż modele SVR oraz Random Forest. Wartość współczynnika determinacji R2 = 0.7519 oznacza, że model wyjaśnia około 75% zmienności danych. 
+
+Na wykresie warto zauważyć pewne przesunięcie, w porównaniu z danymi rzeczywistymi. Dodatkowo, w okolicy dni 40-50, cena znacząco zwiększyła się. Algorytm KNR nie potrafił przewidzieć takiego skoku w danych. 
 
 ![kNN](images/knn.png)
 
 ## Sieć Neuronowa
 
 ### Parametry kalibracji 
+
+W eksperymencie wykorzystano model głębokiej sieci neuronowej do realizacji regresji. Przetestowano kilka konfiguracji architektury sieci, które różnią się:
+- liczbą wartsw ukrytych
+- liczbą neuronów w warstwie
+- funkcjami aktywacji (`activations`)
+  - `relu`: Rectified Linear Unit. `f(x) = max(0,x)`
+  - `elu`: Exponential Linear Unit. `f(x) = { x, x > 0; a*(e^x - 1), x < 0 }`
+  - `leaky_relu`: Modyfikacja ReLU. `f(x) = { x, x > 0; a*x, x < 0 }`
+- poziomem regularyzacji (`dropout`)
+  - współczynnik losowo wyłącza neurony, aby ogranicznyć przeuczenie
+- współczynnkiem uczenia (`lr`)
+  - współczynnik uczenia, kontrolujący szybkość aktualizacji wag
 
 ```python
 nn_configs = [
@@ -273,41 +382,220 @@ nn_configs = [
 
 ### Ocena
 
+Dla oryginalnych danych, sieć neuronowa poradziła sobie w miarę dobrze. 
+
 ```
 ============================================================
 Przetwarzanie danych: original_data
 ============================================================
-Testowanie: {'layers': [64, 32, 16], 'dropout': 0.3, 'lr': 0.001, 'activations': 'relu'}
+Testowanie: {
+    'layers': [64, 32, 16], 
+    'dropout': 0.3, 
+    'lr': 0.001, 
+    'activations': 'relu'
+  }
   Val MAE: 0.1007
-Testowanie: {'layers': [128, 64, 32, 16], 'dropout': 0.2, 'lr': 0.001, 'activations': ['elu', 'elu', 'elu', 'relu']}
+Testowanie: {
+    'layers': [128, 64, 32, 16], 
+    'dropout': 0.2, 
+    'lr': 0.001, 
+    'activations': ['elu', 'elu', 'elu', 'relu']
+  }
   Val MAE: 0.0903
-Testowanie: {'layers': [8, 16, 32, 64, 32, 16, 8], 'dropout': 0.2, 'lr': 0.0005, 'activations': 'relu'}
+Testowanie: {
+    'layers': [8, 16, 32, 64, 32, 16, 8], 
+    'dropout': 0.2, 
+    'lr': 0.0005, 
+    'activations': 'relu'
+  }
   Val MAE: 1.0480
-Testowanie: {'layers': [32, 32, 32, 32, 32], 'dropout': 0.4, 'lr': 0.001, 'activations': 'leaky_relu'}
+Testowanie: {
+    'layers': [32, 32, 32, 32, 32], 
+    'dropout': 0.4, 
+    'lr': 0.001, 
+    'activations': 'leaky_relu'
+  }
   Val MAE: 0.1651
+  
   MAE:  3.98
   MAPE: 2.63%
   MSE:  26.92
   R²:   0.9253
-  best params: {'layers': [128, 64, 32, 16], 'dropout': 0.2, 'lr': 0.001, 'activations': ['elu', 'elu', 'elu', 'relu']}
+  best params: {
+    'layers': [128, 64, 32, 16], 
+    'dropout': 0.2, 
+    'lr': 0.001, 
+    'activations': ['elu', 'elu', 'elu', 'relu']
+  }
 ```
+
+Model sieci neuronowej osiągnął dobre wyniki predykcyjne i uzyskał lepsze rezultaty niż model kNN oraz nieco lepsze niż Random Forest. 
+
+Najskuteczniejsza architektura wykorzystywała malejącą liczbę neuronów w kolejnych warstwach oraz funkcje aktywacji ELU. Może to sugerować, że bardziej elastyczne funkcje aktywacji lepiej radziły sobie z modelowaniem nieliniowych zależności w danych.
+
+Jednocześnie model SVR osiągnął lepsze wyniki końcowe niż sieć neuronowa, szczególnie pod względem wartości MAE i MSE. Może to wskazywać, że dla analizowanego zbioru danych bardziej złożona architektura głębokiego uczenia nie dawała istotnej przewagi nad klasycznymi metodami regresji.
 
 ![Neural network](images/neural_network.png)
 
-## System Ekspercki
+## Rozmyty System Ekspercki
 
-OPISAĆ ZASADY UTWORZONE I METODY
+### Zasady 
 
-### Logika rozmyta 
+W celu wspomagania procesu podejmowania decyzji inwestycyjnych, opracowano rozmyty system ekspercki opraty na logice rozmytej (fuzzy logic). System analizuje aktualną cenę, przewidywaną zmianę ceny i generuje decyzje:
+- KUP
+- TRZYMAJ
+- SPRZEDAJ
+
+System analizuje dwa wejścia:
+- `cena` - aktualna cena przedmiotu
+- `delta` -  różnica pomiędzy prognozowaną ceną, a aktualną ceną
+
+Wyjściem systemu jest:
+- `decyzja` - wartość określająca rekomendację
+
+```python
+cena = ctrl.Antecedent(np.arange(0, 301, 1), 'cena')
+delta = ctrl.Antecedent(np.arange(-50, 51, 1), 'delta')
+decyzja = ctrl.Consequent(np.arange(-1, 1.01, 0.01), 'decyzja')
+```
+
+Zdefiniowano trzy zbiory rozmyte dla `cena`, aby zamodelować zbiory, wykorzystano trójkątne funkcje przynależności:
+- `niska`: 0 - 120
+- `średnia`: 100 - 200
+- `wysoka`: 170 - 300
+
+```python
+cena['niska'] = fuzz.trimf(cena.universe, [0, 0, 120])
+cena['srednia'] = fuzz.trimf(cena.universe, [100, 150, 200])
+cena['wysoka'] = fuzz.trimf(cena.universe, [170, 250, 300])
+```
+
+Analogicznie, dla zmiennnej `delta`, przygotowano trzy różne stany:
+- `spadnie`: -50 - 0
+- `stabilna`: -5 - 5
+- `wzrosnie` - 0 - 50
+
+```python
+delta['spadnie'] = fuzz.trimf(delta.universe, [-50, -15, 0])
+delta['stabilna'] = fuzz.trimf(delta.universe, [-5, 0, 5])
+delta['wzrosnie'] = fuzz.trimf(delta.universe, [0, 15, 50])
+```
+
+Zmienna wyjściowa otrzymała również trzy klasy:
+- `sprzedaj` - wartości ujemne to sprzedaż
+- `trzymaj` - wartości bliskie 0 to utrzymanie pozycji
+- `kup` - wartości dodatnie to zakup
+
+```python
+decyzja['sprzedaj'] = fuzz.trimf(decyzja.universe, [-1, -1, -0.2])
+decyzja['trzymaj'] = fuzz.trimf(decyzja.universe, [-0.3, 0, 0.3])
+decyzja['kup'] = fuzz.trimf(decyzja.universe, [0.2, 1, 1])
+```
+
+Stworzono zestaw reguł `IF-THEN`, na podstawie których system podejmuje decyzje. 
+```python
+rules = [
+    ctrl.Rule(cena['niska'] & delta['wzrosnie'], decyzja['kup']),
+    ctrl.Rule(cena['wysoka'] & delta['spadnie'], decyzja['sprzedaj']),
+    ctrl.Rule(cena['srednia'] & delta['wzrosnie'], decyzja['kup']),
+    ctrl.Rule(cena['srednia'] & delta['spadnie'], decyzja['sprzedaj']),
+    ctrl.Rule(cena['niska'] & delta['spadnie'], decyzja['trzymaj']),
+    ctrl.Rule(cena['wysoka'] & ~delta['spadnie'], decyzja['trzymaj']),
+    ctrl.Rule(cena['niska'] & delta['stabilna'], decyzja['kup']),
+    ctrl.Rule(cena['srednia'] & delta['stabilna'], decyzja['trzymaj']),
+    ctrl.Rule(cena['wysoka'] & delta['stabilna'], decyzja['sprzedaj']),
+]
+```
+
+Taką regułe można zapisać jako: 
+
+```python
+# JEŻELI cena jest niska ORAZ prognoza wskazuje wzrost TO decyzja = kup
+
+ctrl.Rule(cena['niska'] & delta['wzrosnie'], decyzja['kup']),
+```
+
+### Działanie
+
+Prognoza cen pochodziła z uśrednienia wyników modeli regresyjnych, użytych w tym eksperymencie:
+- Random Forest
+- KNN
+- SVR
+- Neural Network
+
+Dla każdego dnia pobrano aktualną cenę przedmiotu, obliczono prognozowaną zmianę ceny. Na podstawie tych danych, system ekspercki wyznaczył wartość decyzji. Ten wynik klasyfikowano jako:
+- KUP (`> 0.15`)
+- TRZYMAJ (`< -0.15`)
+- SPRZEDAJ
+
+```python
+expert = build_fuzzy_expert()
+
+decisions_log = []
+for t in range(start_day, end_day):
+    current_price = prices[t]
+    day_num = t - start_day + 1
+
+    prognoza_value = daily_avg_all.get(day_num)
+    if prognoza_value is None:
+        prognoza_value = prices[t - WINDOW:t].mean()
+
+    expert.input['cena'] = current_price
+    expert.input['delta'] = prognoza_value - current_price
+
+    try:
+        expert.compute()
+        decision_value = expert.output['decyzja']
+    except (KeyError, ValueError):
+        decision_value = 0.0
+
+    if decision_value > 0.15:
+        decision_text = "KUP"
+    elif decision_value < -0.15:
+        decision_text = "SPRZEDAJ"
+    else:
+        decision_text = "TRZYMAJ"
+
+    decisions_log.append(
+        (t + 1, current_price, prognoza_value, decision_value, decision_text))
+```
+
+Symulacja została przeprowadzona dla 86 dni, na danych testowych.
 
 ![Symulacja systemu eksperckiego](images/system_ekspercki.png)
 
+### Podsumowanie wyników:
+
+```
+--- PODSUMOWANIE ---
+  KUP: 7 razy (8.1%)
+  SPRZEDAJ: 58 razy (67.4%)
+  TRZYMAJ: 21 razy (24.4%)
+```
+
+Zastosowanie logiki rozmytej umożliwiło modelowanie niepewności oraz bardziej elastyczne podejmowanie decyzji niż w przypadku klasycznych reguł binarnych. System nie wymagał sztywnych progów cenowych i potrafił uwzględniać częściową przynależność do wielu zbiorów jednocześnie.
+
+Jednocześnie skuteczność systemu była silnie uzależniona od jakości prognoz modeli regresyjnych oraz poprawności zaprojektowanych reguł eksperckich. W praktyce oznacza to, że błędne prognozy mogły prowadzić do nieoptymalnych decyzji inwestycyjnych.
+
 ## Wnioski
 
-Najlepszym modelem okazał się Support Vector Regressor. 
-Najgorszym modelem okazała się sieć neuronowa. 
+Celem projektu było opracowanie oraz porównanie modeli predykcji cen, wykorzystując techniki uczenia maszynowego. W eksperymencie przeanalizowano szeregi czasowe, dla których zastosowano klasyczne modele regresyjne, jak i sieci neuronowe. 
 
-Model LOF najlepiej poprawił działanie modelu. 
+Modele oceniano przy pomocy metryk:
+- MAE,
+- MAPE,
+- MSE,
+- R2
+
+Najlepsze wyniki osiągnął model Support Vector Regressor, który uzyskał:
+- MAE = 2.72,
+- MAPE = 1.79%,
+- MSE = 16.60,
+- R2 = 0.9540.
+
+Model Random Forest również osiągnał dobre rezultaty, R2 = 0.91, ale był mniej dokładny niż SVR. Dla oryginalnych danych, wyniki podobne do RF uzyskała sieć neuronowa, ale tylko dla oryginalnych danych. Eliminowanie anomalii z danych znacznie pogorszyło jakość działania sieci neuronowej. 
+
+Model kNN osiągnał najgorsze wyniki dla danych oryginalnych. Można wnioskować, że kNN jest mniej odporny na charakterystykę szeregów czasowych. 
 
 ```
 Eksperyment            Model     MAE    MAPE      MSE     R²
